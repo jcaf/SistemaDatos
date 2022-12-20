@@ -221,9 +221,9 @@ int8_t ADS1115_capture_mvx(float *mvx)
 //#define INA238_KTIME_CAPTURE_AVERAGE 51//ms INA238_ADC_CONFIGMODE_CT_150uS *  INA238_ADC_CONFIGMODE_AVG_SAMPLE_1024
 //#define INA238_KTIME_CAPTURE_AVERAGE 36//ms INA238_ADC_CONFIGMODE_CT_150uS *  INA238_ADC_CONFIGMODE_AVG_SAMPLE_1024
 #define INA238_KTIME_CAPTURE_AVERAGE 154//ms INA238_ADC_CONFIGMODE_CT_150uS *  INA238_ADC_CONFIGMODE_AVG_SAMPLE_1024
-#define INA238_SMOOTHALG_MAXSIZE 1
+#define INA238_SMOOTHALG_MAXSIZE 2
 
-#define CURRENT_FACTOR_CORRECTION 1.0376F
+#define CURRENT_FACTOR_CORRECTION 1.0F//1.0376F
 
 int8_t IN238_capture_current(float *current)
 {
@@ -263,24 +263,12 @@ int8_t IN238_capture_current(float *current)
 		#else
 			if (smoothAlg_nonblock(&smoothAlg_current, smoothVector, INA238_SMOOTHALG_MAXSIZE, &smoothAnswer))
 			{
-				//++-
 				*current = smoothAnswer * INA238_CURRENT_LSB;
-
-				/*
-				if (*current > 0.0001f)//3 decimales
-				{
-					*current +=CURRENT_KCORRECTION;
-					*current *=1000.0f;	//convert a miliamperios
-				}
-				*/
-
-
 
 				*current *=1000.0f*CURRENT_FACTOR_CORRECTION;	//convert a miliamperios
 
-				if (*current <=0.002f)
-					{*current = 0.000f;}
-				//++-
+//				if (*current <=0.002f)
+//					{*current = 0.000f;}
 
 				job_capture_current.sm0 = 0x0;
 				return 1;
