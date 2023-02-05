@@ -55,7 +55,7 @@ void indicator_job(void)
 	}
 	else if (indicator.sm0 == 2)
 	{
-		if (main_flag.tick)
+		if (main_flag.systick)
 		{
 			indicator.counter0++;
 			if (indicator.counter0 >= indicator.KOn_MAX)
@@ -76,7 +76,7 @@ void indicator_job(void)
 	}
 	else if (indicator.sm0 == 4)
 	{
-		if (main_flag.tick)
+		if (main_flag.systick)
 		{
 			if (++indicator.counter0 >= indicator.KOn_MAX)
 			{

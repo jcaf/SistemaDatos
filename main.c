@@ -12,6 +12,12 @@
  *      avrdude -c usbasp -B5 -p m328P
 avrdude -c usbasp -B5 -p m328P -U lfuse:w:0xD6:m -U hfuse:w:0xD1:m -U efuse:w:0xFE:m
 
+
+- No full swing crytal + 65ms
+- No divide clock by 8
+- BODEN 4.3V
+
+avrdude -c usbasp -B5 -p m328P -U lfuse:w:0xff:m -U hfuse:w:0xd9:m -U efuse:w:0xfc:m
  */
 
 #include "main.h"
@@ -106,44 +112,89 @@ void job_cmd(struct _job *job, enum _JOB_CMD cmd)
 }
 
 
-#define P1_TIME_PRECAPTURE 1500E-3
+/* El voltaje de polarizacion se resta ni bien inicia la captura y se mantiene la resta hasta las 1200,
+ * se sigue midiendo mv1 en todo momento */
+#define P1_TIME_ACTIVATE_OUT1 200E-3	//200mS
 
-int8_t job_boton_p1(void)
+/* Define the time of capturing */
+#define P1_TIME_CAPTURING 1200E-3		//1200mS
+
+/* Define the time of capturing */
+#define P1_TIME_DEACTIVATE_OUT1 1400E-3	//1400mS
+
+//int8_t
+float mv1_last;
+void job_boton_p1(void)
 {
 	if (jobBotonP1.sm0 == JOB_STOP)
 	{
 		jobBotonP1.f.capturing = 0;
 		jobBotonP1 = job_reset;
 		jobBotonP1.sm0--;
+
+		//ADDED
+		main_flag.freeze_capture_in_display = 0; //unlock viewing in LCD
 	}
+
 	else if (jobBotonP1.sm0 == JOB_START)
 	{
-		//ACTIVA OUT 1
-		PinTo1(PORTWxRELAY1,PINxKB_RELAY1);
+		jobBotonP1.f.capturing = 1;
+
+		mv1_last = mv1;
+		//
+		jobBotonP1.counter0 = 0;
+		//
 		jobBotonP1.sm0++;
 
 	}
 	else if (jobBotonP1.sm0 == 2)
 	{
-		if (main_flag.tick)
+		if (main_flag.systick)
 		{
-			if (++jobBotonP1.counter0 >= (P1_TIME_PRECAPTURE /SYSTICK ))
+			if (++jobBotonP1.counter0 >= (P1_TIME_ACTIVATE_OUT1 /SYSTICK ))//200
 			{
-				jobBotonP1.counter0 = 0;
+				//ACTIVA OUT 1
+				PinTo1(PORTWxRELAY1,PINxKB_RELAY1);
 
+				jobBotonP1.sm0++;
+			}
+		}
+	}
+	else if (jobBotonP1.sm0 == 3)
+	{
+		if (main_flag.systick)
+		{
+			if (++jobBotonP1.counter0 >= (P1_TIME_CAPTURING /SYSTICK ))//1200
+			{
+				jobBotonP1.f.capturing = 0;
+				main_flag.freeze_capture_in_display = 1;// frezze
+				indicator_Off();
+				//
+				jobBotonP1.sm0++;
+			}
+		}
+	}
+	else if (jobBotonP1.sm0 == 4)
+	{
+		if (main_flag.systick)
+		{
+			if (++jobBotonP1.counter0 >= (P1_TIME_DEACTIVATE_OUT1 /SYSTICK ))
+			{
 				//DEACTIVATE OUT 1
 				PinTo0(PORTWxRELAY1,PINxKB_RELAY1);
 
-				jobBotonP1.f.capturing = 1;
+				main_flag.sw1_lock = 0; //unlock switch de captura, el usuario ya puede volver a presionar
+
+				//jobBotonP1.counter0 = 0;
+
 				jobBotonP1.sm0++;
 
-				indicator_Off();
 			}
 		}
-
 	}
 
-	return 1;
+
+	//return 1;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -168,7 +219,7 @@ int8_t ADS1115_capture_mvx(float *mvx)
 
 	if (job_capture_mvx.sm0 == 0)
 	{
-		if (main_flag.tick)
+		if (main_flag.systick)
 		{
 			if (++job_capture_mvx.counter1 >= ADS1115_KTIME_CAPTURE_AVERAGE)
 			{
@@ -223,7 +274,7 @@ int8_t ADS1115_capture_mvx(float *mvx)
 #define INA238_KTIME_CAPTURE_AVERAGE 154//ms INA238_ADC_CONFIGMODE_CT_150uS *  INA238_ADC_CONFIGMODE_AVG_SAMPLE_1024
 #define INA238_SMOOTHALG_MAXSIZE 2
 
-#define CURRENT_FACTOR_CORRECTION 1.0F//1.0376F
+#define CURRENT_FACTOR_CORRECTION 1.0209F//
 
 int8_t IN238_capture_current(float *current)
 {
@@ -234,7 +285,7 @@ int8_t IN238_capture_current(float *current)
 
 	if (job_capture_current.sm0 == 0)
 	{
-		if (main_flag.tick)
+		if (main_flag.systick)
 		{
 			if (++job_capture_current.counter1 >= INA238_KTIME_CAPTURE_AVERAGE)
 			{
@@ -303,11 +354,19 @@ void windows1(void)
 }
 
 
+/* Define the cycle time for the capturing*/
 #define BUZZER_TIME_BLINK_CYCLE 100E-3
+
+/* Define the time for the tick of release*/
 #define BUZZER_TIME_RELEASE 75E-3
+
+
+float biased_voltage;
 
 int main(void)
 {
+
+
 	int8_t c = 0;
 	char str_formatted[12];
 	char buff[30];
@@ -357,10 +416,10 @@ int main(void)
 		if (isr_flag.tick)
 		{
 			isr_flag.tick = 0;
-			main_flag.tick = 1;
+			main_flag.systick = 1;
 		}
 		//----------------------------------
-		if (main_flag.tick)
+		if (main_flag.systick)
 		{
 			if (++c >= (20E-3/SYSTICK) )
 			{
@@ -378,24 +437,26 @@ int main(void)
 					ikb_key_was_read(key,0);
 
 
-					//PinToggle(PORTWxBUZZER, PINxKB_BUZZER);
 
-
-					//
-					main_flag.sw1_toggle = !main_flag.sw1_toggle;
-
-					if (main_flag.sw1_toggle)//active P1
+					if (!main_flag.sw1_lock)
 					{
-						job_cmd(&jobBotonP1, JOB_START);
-						indicator_setKSysTickTime_ms(BUZZER_TIME_BLINK_CYCLE/SYSTICK);
-						indicator_cycle_start();
-					}
-					else
-					{
+						//
+						main_flag.sw1_toggle = !main_flag.sw1_toggle;
 
-						job_cmd(&jobBotonP1, JOB_STOP);
-						indicator_setKSysTickTime_ms(BUZZER_TIME_RELEASE/SYSTICK);
-						indicator_On();
+						if (main_flag.sw1_toggle)//active P1
+						{
+							job_cmd(&jobBotonP1, JOB_START);
+							indicator_setKSysTickTime_ms(BUZZER_TIME_BLINK_CYCLE/SYSTICK);
+							indicator_cycle_start();
+							//
+							main_flag.sw1_lock = 1;//bloquear hasta que termine la captura
+						}
+						else
+						{
+							job_cmd(&jobBotonP1, JOB_STOP);
+							indicator_setKSysTickTime_ms(BUZZER_TIME_RELEASE/SYSTICK);
+							indicator_On();
+						}
 					}
 				}
 			}
@@ -412,8 +473,8 @@ int main(void)
 			}
 		}
 
-
-		if (ADS1115_capture_mvx(&mv1))//finalizo
+		main_flag.mv1_updated = ADS1115_capture_mvx(&mv1);
+		if (main_flag.mv1_updated)//finalizo
 		{
 			mv1-=0.125;
 			//
@@ -423,27 +484,37 @@ int main(void)
 				//mv1-=0.100;
 			}
 			//
-
 			//ADS1115_setOperatingMode(SINGLESHOT_POWERDOWN_CONV);
+
 
 		}
 
 		job_boton_p1();//update capturing
 
+
+
 		//---------------------------
 
 		//print V + I
-		if (!jobBotonP1.f.capturing)
+		if (main_flag.freeze_capture_in_display == 0)//muestra directamente, y si es 1, lo ultimo que sacó en el LCD se muestra.
 		{
-			dtostrf(mv1, 0, 3, buff);//solo 3 decimales
+			if (main_flag.mv1_updated)
+			{
+				if (jobBotonP1.f.capturing == 1)
+				{
+					mv1 -= mv1_last;
+				}
+				dtostrf(mv1, 0, 3, buff);//solo 3 decimales
 
-			//lcdan_print_string(buff);
-			lcdan_prepare_str_clearformat(str_formatted,12, buff,0);
-			lcdan_set_cursor_in_row1(6);
-			lcdan_print_string(str_formatted);
+
+				//lcdan_print_string(buff);
+				lcdan_prepare_str_clearformat(str_formatted,12, buff,0);
+				lcdan_set_cursor_in_row1(6);
+				lcdan_print_string(str_formatted);
+			}
+
 			//
 			dtostrf(current, 0, 3, buff);//current in mV + mA
-
 			//lcdan_print_string(buff);
 			lcdan_prepare_str_clearformat(str_formatted,12, buff,0);
 			lcdan_set_cursor_in_row3(6);
@@ -456,7 +527,7 @@ int main(void)
 
 		//---------------------------
 		//end of main while (1)
-		main_flag.tick = 0;
+		main_flag.systick = 0;
 
 	}
 
@@ -467,6 +538,8 @@ ISR(TIMER0_COMPA_vect)
 {
     isr_flag.tick = 1;
 }
+
+
 
 int8_t smoothAlg_nonblock(struct _smoothAlg *smooth, int16_t *buffer, int SMOOTHALG_MAXSIZE, float *Answer)
 {

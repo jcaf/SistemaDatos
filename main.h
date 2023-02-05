@@ -15,9 +15,12 @@
 
 struct _main_flag
 {
-    unsigned tick :1;
+    unsigned systick :1;
     unsigned sw1_toggle:1;
-    unsigned __a:6;
+    unsigned sw1_lock:1;
+    unsigned freeze_capture_in_display:1;
+    unsigned mv1_updated:1;
+    unsigned __a:3;
 
 };
 extern struct _main_flag main_flag;
